@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""FastAPI-приложение для анализа логов через LM Studio."""
+"""FastAPI application for log analysis via LM Studio."""
 
 import json
 from typing import Any
@@ -11,15 +11,15 @@ import uvicorn
 
 app = FastAPI()
 
-# Конфигурация для локального LM Studio.
-# Убедитесь, что адрес совпадает с настройками вашего сервера.
+# Configuration for local LM Studio.
+# Ensure the address matches your server settings.
 LLM_URL = "http://127.0.0.1:1234/v1/chat/completions"
 
-# Если нужно конкретно указать модель, задайте здесь её имя.
-# Иначе будет использована текущая модель на сервере.
+# If you need to specify a model explicitly, set its name here.
+# Otherwise the server's current model will be used.
 MODEL_NAME: str | None = None
 
-# --- МОДЕЛИ ДАННЫХ ---
+# --- DATA MODELS ---
 class AnalyzeRequest(BaseModel):
     id: str
     timestamp: str
@@ -37,29 +37,14 @@ class AnalyzeResponse(BaseModel):
     explanation: str
     recommended_action: str
 
-# --- ЭНДПОИНТЫ ---
+# --- ENDPOINTS ---
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(event: AnalyzeRequest) -> AnalyzeResponse:
-    # Встроенный системный запрос для модели.
-    # Принцип: четко задать формат вывода и допустимые поля.
-    system_prompt = (
-        "You are a cybersecurity log analysis assistant. "
-        "Analyze the provided normalized log event and return ONLY valid JSON. "
-        "The JSON must contain exactly these keys: "
-        "score, severity, category, explanation, recommended_action. "
-        "Rules: "
-        "score must be a float from 0.0 to 1.0; "
-        "severity must be one of low, medium, high, critical; "
-        "category should be one of web, auth, system, access, unknown; "
-        "explanation must be short and useful; "
-        "recommended_action should be one of monitor, investigate, block, ignore."
-    )
-
-    # Собираем данные события в одну структуру
+    # Collect event data into one structure
     user_payload = {
         "id": event.id,
         "timestamp": event.timestamp,
@@ -71,26 +56,21 @@ async def analyze(event: AnalyzeRequest) -> AnalyzeResponse:
         "metadata": event.metadata,
     }
 
-    # Формируем запрос для LM Studio.
+    # Build request for LM Studio.
+    # All LLM settings (for example, system prompt and temperature) are configured in LM Studio.
     llm_request: dict[str, Any] = {
         "messages": [
-            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": (
-                    "Analyze this normalized log event and decide if it is suspicious. "
-                    "Return JSON only.\n\n"
-                    + json.dumps(user_payload, ensure_ascii=False)
-                ),
+                "content": json.dumps(user_payload, ensure_ascii=False),
             },
         ],
-        "temperature": 0.1,
     }
 
     if MODEL_NAME:
         llm_request["model"] = MODEL_NAME
 
-    # Отправляем POST-запрос к LM Studio и проверяем ответ.
+    # Send POST request to LM Studio and verify the response.
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(LLM_URL, json=llm_request)
@@ -99,7 +79,7 @@ async def analyze(event: AnalyzeRequest) -> AnalyzeResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}")
 
-    # Извлекаем текстовый ответ модели из стандартного формата OpenAI-подобных API.
+    # Extract the model's text response from the standard OpenAI-like API format.
     try:
         content = data["choices"][0]["message"]["content"]
     except Exception as exc:
@@ -115,12 +95,12 @@ async def analyze(event: AnalyzeRequest) -> AnalyzeResponse:
         recommended_action=_normalize_action(parsed.get("recommended_action", "investigate")),
     )
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- HELPER FUNCTIONS ---
 def _parse_json_response(content: str) -> dict[str, Any]:
-    """Пытаемся извлечь словарь из ответа модели.
+    """Try to parse a dictionary from the model response.
 
-    Сначала пробуем распарсить весь текст как JSON.
-    Если ответ обернут в markdown-кодовую секцию, ищем JSON внутри.
+    First attempt to parse the entire text as JSON.
+    If the response is wrapped in a markdown code block, search for JSON inside.
     """
     text = content.strip()
     try:
@@ -154,7 +134,7 @@ def _parse_json_response(content: str) -> dict[str, Any]:
 
 
 def _normalize_score(value: Any) -> float:
-    """Приводит значение score к диапазону [0.0, 1.0]."""
+    """Normalize score value to the [0.0, 1.0] range."""
     try:
         return max(0.0, min(1.0, float(value)))
     except Exception:
@@ -162,21 +142,21 @@ def _normalize_score(value: Any) -> float:
 
 
 def _normalize_severity(value: Any) -> str:
-    """Проверяет, что severity входит в список допустимых значений."""
+    """Ensure severity is one of the allowed values."""
     allowed = {"low", "medium", "high", "critical"}
     text = str(value).strip().lower()
     return text if text in allowed else "medium"
 
 
 def _normalize_category(value: Any) -> str:
-    """Проверяет, что category входит в список допустимых значений."""
+    """Ensure category is one of the allowed values."""
     allowed = {"web", "auth", "system", "access", "unknown"}
     text = str(value).strip().lower()
     return text if text in allowed else "unknown"
 
 
 def _normalize_action(value: Any) -> str:
-    """Проверяет, что recommended_action входит в список допустимых значений."""
+    """Ensure recommended_action is one of the allowed values."""
     allowed = {"monitor", "investigate", "block", "ignore"}
     text = str(value).strip().lower()
     return text if text in allowed else "investigate"
